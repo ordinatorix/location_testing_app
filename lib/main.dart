@@ -25,14 +25,7 @@ class MyApp extends StatelessWidget {
           value: _locationService.locationStream,
         ),
       ],
-      child:
-          // StreamBuilder<DeviceLocation>(
-          //     stream: _locationService?.locationStream,
-          //     builder: (context, snapshot) {
-          //       log.d('location snapshot is : ${snapshot.data}');
-
-          //       return
-          MaterialApp(
+      child: MaterialApp(
         title: 'Location Tester',
         theme: ThemeData(
           primarySwatch: Colors.blue,
@@ -40,7 +33,6 @@ class MyApp extends StatelessWidget {
         ),
         home: MyHomePage(title: 'Flutter Demo Home Page'),
       ),
-      // }),
     );
   }
 }
