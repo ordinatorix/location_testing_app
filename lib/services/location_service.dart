@@ -13,116 +13,26 @@ class LocationService {
 
   Stream<DeviceLocation> get locationStream => _locationController.stream;
 
+  StreamSubscription locationStreamer;
+
+  Completer locationStatus = Completer<bool>();
+
   /// Stream user current location
   LocationService() {
     log.i('locationServiceConstructor ');
 
     // is permission given?
 
-    Geolocator.checkPermission().then((permission) {
-      if (permission == LocationPermission.always ||
-          permission == LocationPermission.whileInUse) {
-        // Check if location Service is enable.
-
-        Geolocator.isLocationServiceEnabled().then((locationServiceEnabled) {
-          // if (locationServiceEnabled) {
-          log.i('starting location stream');
-          Geolocator.getPositionStream(
-                  desiredAccuracy: LocationAccuracy.medium, distanceFilter: 0)
-              .listen((Position position) {
-            log.d('$position');
-            if (position != null) {
-              _locationController.add(
-                DeviceLocation(
-                  accuracy: position.accuracy,
-                  latitude: position.latitude,
-                  longitude: position.longitude,
-                  speed: position.speed,
-                  altitude: position.altitude,
-                ),
-              );
-            }
-          }).onError((error) {
-            log.wtf('error is here?: $error');
-            bool closed = _locationController.isClosed;
-            bool paused = _locationController.isPaused;
-
-            log.e('handled position error: $error');
-            log.e(
-                'location controller status: closed: $closed, paused: $paused');
-          });
-          // } else {
-          //   log.d('location service is disabled');
-
-          //   throw 'location service is disabled. please enable it1.';
-          // }
-        }).catchError((e) => log.e(e));
-      } else if (permission == LocationPermission.denied) {
-        // if permission is not granted
-        log.d('Permission was found to be denied, requesting permissions.');
-        Geolocator.requestPermission().then(
-          (permission) {
-            // request permision
-            log.d('returned permission: $permission');
-            if (permission == LocationPermission.always ||
-                permission == LocationPermission.whileInUse) {
-              // if permission is granted
-              log.d('permission granted');
-              Geolocator.isLocationServiceEnabled().then(
-                (locationServiceEnabled) {
-                  // if (locationServiceEnabled) {
-                  log.d(
-                      'Starting location stream after being granted permission.');
-
-                  Geolocator.getPositionStream(
-                          desiredAccuracy: LocationAccuracy.medium,
-                          distanceFilter: 0)
-                      .listen((Position position) {
-                    log.d('$position');
-                    if (position != null) {
-                      _locationController.add(
-                        DeviceLocation(
-                          accuracy: position.accuracy,
-                          latitude: position.latitude,
-                          longitude: position.longitude,
-                          speed: position.speed,
-                          altitude: position.altitude,
-                        ),
-                      );
-                    }
-                    log.d('added location to stream');
-                  }).onError((error) {
-                    log.wtf('error is here?: $error');
-                    bool closed = _locationController.isClosed;
-                    bool paused = _locationController.isPaused;
-
-                    log.e('handled position error: $error');
-                    log.e(
-                        'location controller status: closed: $closed, paused: $paused');
-                  });
-                  // } else {
-                  //   log.d('location service is disabled');
-                  //   throw 'location service is disabled. please enable it2.';
-                  // }
-                },
-              ).catchError(
-                (e) => log.e(e),
-              );
-            } else {
-              log.d('permission denied.... for now');
-              throw 'permission denied.... for now';
-            }
-          },
-        ).catchError(
-          (e) => log.e(e),
-        );
-      } else {
-        log.d('location was permanantly denied');
-        throw 'location permission was permanantly denied';
-      }
-    }).catchError(
-      (e) => log.e(e),
-    );
+    checkLocationServiceStatus().then((value) {
+      log.d('waiting for future to complete');
+      locationStatus.future.then((greenLight) {
+        if (greenLight) {
+          locationStreamer = _streamLocation();
+        } else {
+          log.w('You are shit out of luck');
+        }
+      });
+    });
   }
 
   /// Dispose of location service.
@@ -167,5 +77,110 @@ class LocationService {
         accuracy: 0.0,
       );
     }
+  }
+
+  void _isLocationActive() async {
+    log.i('_isLocationActive');
+
+    log.d('checking location service status');
+    bool result = await Geolocator.isLocationServiceEnabled();
+
+    if (result) {
+      log.d('location is enabled?: $result');
+      // complete with true
+      locationStatus.complete(result);
+    } else {
+      log.d('location is enabled?: $result');
+      Future.delayed(Duration(seconds: 1), () {
+        log.d('waited half a second');
+        _isLocationActive();
+      });
+    }
+  }
+
+  bool justDenied = false;
+  Future<void> checkLocationServiceStatus() async {
+    log.i('checkLocationServiceStatus');
+
+    log.d('checking location permission');
+    LocationPermission permissionStatus = await Geolocator.checkPermission();
+    switch (permissionStatus) {
+      case LocationPermission.always:
+        {
+          log.d('Location is always permitted.');
+          // check to see if service is active
+          _isLocationActive();
+        }
+
+        break;
+      case LocationPermission.whileInUse:
+        {
+          log.d('Location is permitted while in use.');
+          // check to see if service is active
+          _isLocationActive();
+        }
+
+        break;
+      case LocationPermission.denied:
+        {
+          log.d('Location is denied.');
+          // request permissions
+          if (!justDenied) {
+            Geolocator.requestPermission()
+                .then((value) => checkLocationServiceStatus());
+          } else {
+            locationStatus.complete(false);
+            // TODO: show banner indicating that location is not permitted.
+          }
+          justDenied = true;
+        }
+
+        break;
+      case LocationPermission.deniedForever:
+        {
+          log.w('Location is denied FOR EVER.');
+          locationStatus.complete(false);
+          // TODO: show banner indicating that location is not permitted.
+          // let user know that permission is permanatly denied
+        }
+
+        break;
+
+      default:
+        {
+          // request permission if the permision status is unknown
+          Geolocator.requestPermission()
+              .then((value) => checkLocationServiceStatus());
+        }
+    }
+  }
+
+  /// Stream user current location.
+  StreamSubscription<Position> _streamLocation() {
+    log.i('_streamLocation');
+
+    StreamSubscription<Position> positionStream = Geolocator.getPositionStream(
+            desiredAccuracy: LocationAccuracy.medium, distanceFilter: 0)
+        .listen((Position position) {
+      log.d('position: $position');
+      if (position != null) {
+        _locationController.add(DeviceLocation(
+          accuracy: position.accuracy,
+          latitude: position.latitude,
+          longitude: position.longitude,
+          speed: position.speed,
+          altitude: position.altitude,
+        ));
+      }
+    }, onError: (error) {
+      log.wtf('error is here?: $error');
+      bool closed = _locationController.isClosed;
+      bool paused = _locationController.isPaused;
+
+      log.e('handled position error: $error');
+      log.e('location controller status: closed: $closed, paused: $paused');
+    });
+
+    return positionStream;
   }
 }
